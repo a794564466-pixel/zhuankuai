@@ -315,16 +315,21 @@
   kbd { color: #000; }
   .result {
     margin-top: 6px;
-    width: 100%; max-width: 340px;
+    width: 100%; max-width: 400px;
     background: rgba(255,247,230,.82);
     border: 4px solid #7a4a12;
     border-radius: 16px;
     box-shadow: 0 8px 0 #7a4a12, 0 14px 28px rgba(0,0,0,.4);
-    padding: 14px 16px 16px;
+    padding: 16px 18px 18px;
     color: var(--ink);
     position: relative;
     overflow: hidden;
   }
+  /* 结算文字清晰调高 40% */
+  .result h3 { font-size: 48px; }
+  .result kbd { font-size: 1.4em; }
+  .result .btn-primary { font-size: 24px; }
+  .result .btn-ghost { font-size: 20px; }
   .result::after {
     content: "苏秦背剑";
     position: absolute; right: -8px; bottom: 6px;
@@ -332,20 +337,20 @@
     letter-spacing: 2px;
     writing-mode: vertical-rl;
   }
-  .result .rows { display: grid; gap: 6px; margin-bottom: 12px; }
+  .result .rows { display: grid; gap: 8px; margin-bottom: 14px; }
   .result .row {
     display: flex; justify-content: space-between; align-items: baseline;
-    font-size: 14px; color: #6b3d0b;
-    border-bottom: 2px dotted #e0c48a; padding-bottom: 4px;
+    font-size: 20px; color: #6b3d0b;
+    border-bottom: 2px dotted #e0c48a; padding-bottom: 5px;
   }
-  .result .row b { font-size: 19px; color: var(--mario-red); }
+  .result .row b { font-size: 27px; color: var(--mario-red); }
   .result .rank {
-    text-align: center; font-size: 15px; margin-bottom: 12px;
-    background: #ffe9a8; border: 3px solid #7a4a12; border-radius: 10px; padding: 7px 0;
+    text-align: center; font-size: 21px; margin-bottom: 14px;
+    background: #ffe9a8; border: 3px solid #7a4a12; border-radius: 10px; padding: 9px 0;
   }
-  .result .rank b { color: #b3560a; font-size: 18px; }
+  .result .rank b { color: #b3560a; font-size: 25px; }
   .result .btns { display: grid; gap: 8px; }
-  .result .note { margin-top: 10px; font-size: 12px; color: #8a6a3a; text-align: center; line-height: 1.6; }
+  .result .note { margin-top: 10px; font-size: 17px; color: #8a6a3a; text-align: center; line-height: 1.6; }
   .result kbd { border-color: #7a4a12; }
   .result .btn-ghost { box-shadow: 0 4px 0 #7a4a12; }
   .result .btn-ghost:active { box-shadow: 0 1px 0 #7a4a12; }
@@ -434,6 +439,7 @@
         <h2>实时排行榜 · 前十</h2>
         <ol class="board" id="board"></ol>
         <div class="empty" id="boardEmpty">还没有成绩，快来抢占第一名</div>
+        <div class="status" id="saveTip" style="margin-top:8px;text-align:center"></div>
       </div>
 
       <div class="card">
@@ -502,7 +508,7 @@ const el = {
   hudName: $("hudName"), hudScore: $("hudScore"), hudLevel: $("hudLevel"), hudLife: $("hudLife"),
   name: $("nameInput"), login: $("loginBtn"), logout: $("logoutBtn"),
   netBadge: $("netBadge"), netMsg: $("netMsg"), board: $("board"),
-  boardEmpty: $("boardEmpty"),
+  boardEmpty: $("boardEmpty"), saveTip: $("saveTip"),
   rsTitle: $("rsTitle"), rsName: $("rsName"), rsScore: $("rsScore"),
   rsLevel: $("rsLevel"), rsLives: $("rsLives"), rsBest: $("rsBest"),
   rsRank: $("rsRank"), rsNote: $("rsNote"), rsAgain: $("rsAgain"), rsClose: $("rsClose")
@@ -510,7 +516,26 @@ const el = {
 
 /* ================== 云端（Firebase / 本地演示两种模式） ================== */
 const CLOUD = isConfigured(firebaseConfig);
-const store = { name: "", rank: [] };
+const store = { name: "", rank: [], cloudRank: [], localRank: [] };
+
+/* 读取本机历史成绩（按玩家名保留最高分） */
+function loadLocal() {
+  try {
+    const all = JSON.parse(localStorage.getItem("bbb_scores") || "{}");
+    store.localRank = Object.values(all)
+      .filter((r) => r && r.name && Number(r.score) > 0)
+      .sort((a, b) => b.score - a.score).slice(0, 10);
+  } catch (e) { store.localRank = []; }
+}
+/* 合并云端与本机榜单，同名/同 uid 取最高分 */
+function mergeRank() {
+  const map = {};
+  [...store.localRank, ...store.cloudRank].forEach((r) => {
+    const k = r.uid || r.name;
+    if (!map[k] || map[k].score < r.score) map[k] = { ...r };
+  });
+  store.rank = Object.values(map).sort((a, b) => b.score - a.score).slice(0, 10);
+}
 
 function setNetUi(ok, msg) {
   el.netBadge.className = "badge " + (ok ? "live" : "demo");
@@ -560,27 +585,49 @@ function startRankListener(api) {
       const v = child.val() || {};
       arr.push({ name: v.name || "匿名玩家", score: Number(v.score) || 0, uid: child.key });
     });
-    store.rank = arr.reverse();
+    store.cloudRank = arr.reverse();
+    mergeRank();
     renderBoard();
-  }, () => setNetUi(false, "数据库读取失败，请检查链接与规则。"));
+    setNetUi(true, "已连接实时数据库，成绩会同步到云端榜单。");
+  }, (err) => {
+    /* 不再静默：把云端失败原因显示出来，本机榜单照常可用 */
+    store.cloudRank = [];
+    mergeRank();
+    renderBoard();
+    setNetUi(false, "云端读取失败（" + (err && err.code ? err.code : "未知原因") + "），榜单显示本机记录。请到 Firebase 控制台创建 Realtime Database 并开启匿名登录。");
+  });
 }
 
-function saveScore(score) {
+/* 记录成绩：内存榜单即时刷新；持久化/云端写入按 100 分节流（force 立即写） */
+function saveScore(score, force = false) {
+  const name = store.name || "匿名玩家";
+  if (!(score > 0)) return;
+  /* ① 内存榜单：不依赖任何存储 API，排行榜立即可见 */
+  const mine = store.localRank.find((r) => r.name === name);
+  if (mine) { if (score > mine.score) mine.score = score; }
+  else store.localRank.push({ name, score, ts: Date.now() });
+  store.localRank.sort((a, b) => b.score - a.score);
+  mergeRank();
+  renderBoard();
+  el.saveTip.textContent = "已记录：" + name + " · " + score + " 分";
+  if (!force && score - game.lastSaved < 100) return;
+  game.lastSaved = score;
+  /* ② 持久化到 localStorage（file:// 下可能被禁用，失败不影响①） */
+  try {
+    const all = JSON.parse(localStorage.getItem("bbb_scores") || "{}");
+    const exist = Object.values(all).find((r) => r && r.name === name);
+    const key = exist ? Object.keys(all).find((k) => all[k] === exist) : "local-" + Math.random().toString(36).slice(2, 9);
+    if (!exist || Number(all[key].score) < score) all[key] = { name, score, ts: Date.now() };
+    localStorage.setItem("bbb_scores", JSON.stringify(all));
+  } catch (e) {}
+  /* ③ 再写云端（失败会提示原因，不影响本机记录） */
   if (CLOUD && db && uid) {
     import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js")
       .then(({ ref, set }) => set(ref(db, "scores/" + uid), {
-        name: store.name || "匿名玩家", score, ts: Date.now(),
-        savedAt: new Date().toISOString()
+        name, score, ts: Date.now(), savedAt: new Date().toISOString()
       }))
-      .catch(() => {});
-  } else {
-    const all = JSON.parse(localStorage.getItem("bbb_scores") || "{}");
-    const key = store.localId || (store.localId = "local-" + Math.random().toString(36).slice(2, 9));
-    all[key] = { name: store.name || "匿名玩家", score, ts: Date.now() };
-    /* 只保留每个玩家最高分，取前 10 */
-    store.rank = Object.values(all).sort((a, b) => b.score - a.score).slice(0, 10);
-    localStorage.setItem("bbb_scores", JSON.stringify(all));
-    renderBoard();
+      .then(() => setNetUi(true, "成绩 " + score + " 分已同步到云端榜单。"))
+      .catch((e) => setNetUi(false, "云端写入失败（" + (e && e.code ? e.code : "未知原因") + "），成绩已保存在本机榜单。"));
   }
 }
 
@@ -600,9 +647,11 @@ function renderBoard() {
     li.append(nm, sc);
     el.board.appendChild(li);
   });
-  if (typeof updateRankLine === "function") updateRankLine();
+  /* 仅当结算面板处于打开状态时才刷新排名行；
+     页面初始渲染阶段（游戏数据尚未初始化、面板未开）直接跳过，防止引用报错 */
+  if (el.ovResult.style.display !== "none") updateRankLine();
 }
-renderBoard();
+loadLocal(); mergeRank(); renderBoard();
 
 /* ================== 游戏本体 ================== */
 const cv = el.canvas, ctx = cv.getContext("2d");
@@ -645,7 +694,7 @@ const POW = { expand: 0, shrink: 0, slow: 0, magnet: 0 };  /* 剩余帧数，0 =
 
 const game = {
   state: "idle",       // idle | ready | playing | paused | win | over
-  score: 0, lives: 3, level: 1, bricksLeft: 0, best: 0, t: 0,
+  score: 0, lives: 3, level: 1, bricksLeft: 0, best: 0, t: 0, lastSaved: 0,
   keys: { left: false, right: false },
   bricks: [], parts: [], floats: [], items: []
 };
@@ -798,9 +847,10 @@ function showResult(win) {
 function updateRankLine() {
   const idx = store.rank.findIndex((r) =>
     (uid && r.uid === uid) || (!uid && r.name === store.name));
+  const mine = idx >= 0 ? store.rank[idx].score : game.score;
   el.rsRank.innerHTML = idx >= 0
-    ? "当前排名 <b>第 " + (idx + 1) + " 位</b>（前十实时刷新）"
-    : "暂未进入前十，再来一局冲榜！";
+    ? "当前排名 <b>第 " + (idx + 1) + " 位</b>&nbsp;·&nbsp;得分 <b>" + mine + "</b>"
+    : "暂未进入前十&nbsp;·&nbsp;本局得分 <b>" + mine + "</b>，再来一局冲榜！";
 }
 
 function addScore(p, x, y) {
@@ -808,6 +858,8 @@ function addScore(p, x, y) {
   game.floats.push({ x, y, t: 0, text: "+" + p });
   if (game.score > game.best) game.best = game.score;
   el.hudScore.textContent = game.score;
+  /* 打砖即时上榜：内存榜单每次得分都刷新；持久化/云端在 saveScore 内部按 100 分节流 */
+  if (store.name) saveScore(game.score);
 }
 
 function burst(x, y, color) {
@@ -835,7 +887,7 @@ function hitBrick(b) {
 }
 
 function nextLevel() {
-  saveScore(game.score);
+  saveScore(game.score, true);
   if (game.level >= 3) {
     game.state = "win";
     showResult(true);
@@ -855,7 +907,7 @@ function loseLife() {
   el.hudLife.textContent = game.lives;
   if (game.lives <= 0) {
     game.state = "over";
-    saveScore(game.score);
+    saveScore(game.score, true);
     showResult(false);
   } else {
     resetBall();
@@ -867,7 +919,7 @@ function loseLife() {
 function startGame(name) {
   store.name = name;
   el.hudName.textContent = name;
-  Object.assign(game, { score: 0, lives: 3, level: 1, best: 0 });
+  Object.assign(game, { score: 0, lives: 3, level: 1, best: 0, lastSaved: 0 });
   el.hudScore.textContent = 0; el.hudLevel.textContent = 1; el.hudLife.textContent = 3;
   buildLevel(1);
   paddle.x = (W - paddle.w) / 2;
